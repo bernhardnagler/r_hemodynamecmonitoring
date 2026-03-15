@@ -1,0 +1,138 @@
+---
+title: "HemodynamECMOnitoring-VA"
+author: "Bernhard Nagler"
+format: html
+format:
+  html:
+    embed-resources: true
+editor: visual
+echo: false
+warning: false
+---
+
+```{r}
+#| include: false
+library(tidyverse)
+library(readxl)
+library(gtsummary)
+library(labelled)
+library(lubridate)
+library(ggpubr)
+library(easystats)
+library(gt)
+library(knitr)
+library(pROC)
+```
+
+```{r}
+#| include: FALSE
+
+source("01_import.R")
+# External labelling function 
+source("02_labels.R")
+```
+
+```{r}
+df_full <- df_ready %>%
+  apply_study_labels()
+
+df_tp1 <- df_full %>%
+  filter(source_sheet == "Timepoint_01")
+```
+
+#### Table 1 - Baseline Parameters
+
+```{r}
+# write_delim(head(df_tp1), "head_df_tp1.csv", delim = ";")
+```
+
+```{r}
+df_tp1 %>%
+  select(Alter, Geschlecht, height, weight, bmi, ibw, bsa, sapsiii, sofa_admission, icu_diagnosis_cat, cannula_drain_site, cannula_return_site) %>%
+  tbl_summary(type = list(
+      c(Alter, height, weight, bmi, bsa, ibw, sapsiii, sofa_admission) ~ "continuous",
+      c(Geschlecht, icu_diagnosis_cat, cannula_drain_site, cannula_return_site) ~ "categorical"
+    ),
+    missing = "ifany",
+    missing_text = "Missing"
+  ) %>%
+  add_n()
+```
+#### ROC Analysis
+```{r}
+# 1. ROC for PLR-induced change in TTE VTI
+roc_tte <- roc(response = df_tp1$responsive_fluid_vti, 
+               predictor = df_tp1$change_plr_vti_perc,
+               ci = TRUE, plot = TRUE)
+
+# 2. ROC for PLR-induced change in PCA SV
+roc_pca <- roc(response = df_tp1$responsive_fluid_vti, 
+               predictor = df_tp1$change_plr_pca_sv_perc,
+               ci = TRUE, plot = TRUE)
+
+# 3. ROC for PLR-induced change in etCO2
+roc_etco2_abs <- roc(response = df_tp1$responsive_fluid_vti, 
+                 predictor = df_tp1$change_plr_etco2_abs,
+                 ci = TRUE, plot = TRUE)
+ 
+```
+```{r}
+# Table 2 ROC Results:
+# Updated Function to handle both Percentage and Absolute thresholds
+get_roc_stats_v2 <- function(roc_obj, name, is_absolute = FALSE) {
+  best_coords <- coords(roc_obj, "best", ret = c("threshold", "sensitivity", "specificity"))
+  
+  # Logic: If it's a percentage (like 1.15), convert to 15%. 
+  # If it's absolute (like 2.5 mmHg), keep it as 2.5.
+  display_threshold <- if(is_absolute) {
+    best_coords$threshold 
+  } else {
+    (best_coords$threshold - 1) * 100
+  }
+  
+  data.frame(
+    Method = name,
+    AUC = as.numeric(roc_obj$auc),
+    AUC_LCI = roc_obj$ci[1],
+    AUC_UCI = roc_obj$ci[3],
+    Best_Threshold = display_threshold,
+    Unit = if(is_absolute) "mmHg" else "% change",
+    Sensitivity = best_coords$sensitivity,
+    Specificity = best_coords$specificity
+  )
+}
+
+# Combine results with specific flags
+roc_summary_table <- rbind(
+  get_roc_stats_v2(roc_tte, "TTE (VTI)", is_absolute = FALSE),
+  get_roc_stats_v2(roc_pca, "PCA (SV)", is_absolute = FALSE),
+  get_roc_stats_v2(roc_etco2_abs, "etCO2 (Abs)", is_absolute = TRUE)
+)
+
+print(roc_summary_table)
+
+```
+
+##### Comparing ROC Curves (Hanley-McNeil Method)
+```{r}
+# Compare TTE vs PCA
+comp_tte_pca <- roc.test(roc_tte, roc_pca, method = "delong")
+print(comp_tte_pca$p.value)
+
+# Compare TTE vs etCO2
+comp_tte_etco2 <- roc.test(roc_tte, roc_etco2, method = "delong")
+print(comp_tte_etco2$p.value)
+```
+#### Figure ROC Curves
+```{r}
+plot(roc_tte, col = "blue", main = "ROC Curves: Predicting Fluid Responsiveness via PLR")
+plot(roc_pca, col = "red", add = TRUE)
+plot(roc_etco2, col = "green", add = TRUE)
+
+legend("bottomright", 
+       legend = c(paste0("TTE (AUC: ", round(roc_tte$auc, 2), ")"),
+                  paste0("PCA (AUC: ", round(roc_pca$auc, 2), ")"),
+                  paste0("etCO2 (AUC: ", round(roc_etco2$auc, 2), ")")),
+       col = c("blue", "red", "green"), lwd = 2)
+```
+

@@ -503,9 +503,15 @@ df_frresults <- df_calculated_pca %>%
     responsive_fluid_etco2_abs = change_fluid_etco2_abs >= 2,
     change_fluid_ppv_perc = fluid_pca_ppv/fluid_baseline_ppv,
     change_fluid_ppv_abs = fluid_pca_ppv - fluid_baseline_ppv,
-    responsive_fluid_ppv_abs = change_fluid_ppv_abs <= -2
-  
-  )
+    responsive_fluid_ppv_abs = change_fluid_ppv_abs <= -2,
+    rdaid = Patient_ID
+  ) %>%
+  relocate(rdaid, source_sheet)
 
 # quick check:
 # df_frresults %>% select(responsive_plr_vti, responsive_fluid_vti) %>% view()
+
+####### FURTHER DATA CLEANING:
+df_ready <- df_frresults %>%
+  mutate(across(.cols = c(Alter, height, weight, bmi, ibw, sapsiii, sofa_admission), .fns = as.numeric)) %>%
+  mutate(across(where(is.numeric), ~ if_else(is.finite(.), ., NA_real_)))
